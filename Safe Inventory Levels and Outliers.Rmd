@@ -1,0 +1,138 @@
+---
+title: "Safe Inventory Levels and Outlier Analysis"
+author: "C Murphy"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(viridis)
+library(RcppRoll)
+
+## This line overwrites the default ggplot color function with a manual scale for filling for the 4 products of interest.
+scale_fill_discrete <- function(...) scale_fill_manual(values=c("#FCFFA4FF", "#F9C932FF", "#F57A18FF", "#BB3754FF"))
+
+## Set a default theme for all ggplots.
+theme_set(theme_bw())
+
+```
+
+## Purpose
+
+This tidyverse based R workflow analyzes mean blood usage over a given time period in order to calculate safe minimum blood inventories to cover both mean daily usage as well as potential outliers.
+
+
+This analysis was prepared for UMaryland Medical Center using data generated entirely from the Cerner LIS.
+
+## Historical Analysis
+
+```{r include = FALSE}
+## This is the data importation, cleaning, and manipulation block.
+
+## Import data
+tfns <- read.csv("2019_test.csv")
+
+## Convert dates from factors into date objects via stripping the time and converting to a POSIXCT
+tfns <- tfns %>% mutate(Issued_DT = as.POSIXct(strptime(EVENT_DT_TM, "%m/%d/%Y %H:%M"))) %>% mutate(Issued_DO = format(Issued_DT, "%m/%d/%Y")) %>% mutate(WD = weekdays(Issued_DT))
+
+## Our database has multiple institutions. This code selects the institution of interest.
+tfns <- tfns %>% filter(str_detect(FACILITY, "Univ MD Med Sys"))
+
+## Assign product types via ISBT codes.
+redcellCodes <- paste(c("E0181", "E0224", "E0226", "E0316", "E0332", "E0336", "E0379", "E0382", "E0424","E0661", "E0668", "E0669", "E0678", "E0685", "E0686", "E4519", "E4527", "E4528", "E4532", "E4533", "E4544", "E4545", "E4560", "E4561", "E4564", "E4565", "E5169", "E5170"), collapse = "|")
+plasmaCodes <- paste(c("E2700", "E2701", "E2719", "E2737", "E7731", "E7750", "E7751", "E7752"), collapse = "|")
+pltCodes <- paste(c("E2984", "E2986", "E2987", "E2988", "E3046", "E3056", "E3057", "E3058", "E3077", "E3087", "E3088", "E3089", "E4643", "E7001", "E7002", "E7003", "E7004", "E7005", "E7006", "E7007", "E7008", "E7011", "E7012", "E8340", "E8341", "E8342", "E8343", "E8344"), collapse = "|")
+cryoCodes <- paste(c("E3581", "E3591", "E3592"), collapse = "|")
+
+tfns <- tfns %>% mutate(ProductID = case_when(str_detect(PRODUCT_TYPE_DISPLAY, redcellCodes) ~ "RBC", str_detect(PRODUCT_TYPE_DISPLAY, plasmaCodes) ~ "FFP", str_detect(PRODUCT_TYPE_DISPLAY, pltCodes) ~ "PLT", str_detect(PRODUCT_TYPE_DISPLAY, cryoCodes) ~ "CRYO"))
+
+write.csv(tfns, "December19toMarch20_RMD_CM.csv")
+
+## Count the number of transfusions. Ungroup is necessary for the next step.
+tfnCts <- tfns %>% group_by(Issued_DO, ProductID) %>% summarise(nTfns = length(PRODUCT_NBR))  %>% mutate(Issued_POS = as.POSIXct(strptime(Issued_DO, "%m/%d/%Y"))) %>% ungroup()
+
+
+
+## Calculate mean product usage and standard deviations, as well as rolling averages.
+RBCcts <- tfnCts %>% filter(ProductID == "RBC")
+FFPcts <- tfnCts %>% filter(ProductID == "FFP")
+PLTcts <- tfnCts %>% filter(ProductID == "PLT")
+
+meanRBC <- mean(RBCcts$nTfns)
+SDRBC <- sd(RBCcts$nTfns)
+maxRBC <- max(RBCcts$nTfns)
+
+rollingAvgRBC <- roll_mean(RBCcts$nTfns, n= 5)
+meanrollingAvgRBC <- mean(rollingAvgRBC)
+SDrollingAvgRBC <- sd(rollingAvgRBC)
+maxrollingAvgRBC <- max(rollingAvgRBC)
+
+meanFFP <- mean(FFPcts$nTfns)
+SDFFP <- sd(FFPcts$nTfns)
+maxFFP <- max(FFPcts$nTfns)
+
+rollingAvgFFP <- roll_mean(FFPcts$nTfns, n= 5)
+meanrollingAvgFFP <- mean(rollingAvgFFP)
+SDrollingAvgFFP <- sd(rollingAvgFFP)
+maxrollingAvgFFP <- max(rollingAvgFFP)
+
+
+meanPLT <- mean(PLTcts$nTfns)
+SDPLT <- sd(PLTcts$nTfns)
+maxPLT <- max(PLTcts$nTfns)
+
+rollingAvgPLT <- roll_mean(PLTcts$nTfns, n= 5)
+meanrollingAvgPLT <- mean(rollingAvgPLT)
+SDrollingAvgPLT <- sd(rollingAvgPLT)
+maxrollingAvgPLT <- max(rollingAvgPLT)
+
+
+
+mindate <- min(tfnCts$Issued_POS)
+maxdate <- max(tfnCts$Issued_POS)
+
+
+```
+
+
+```{r echo = FALSE}
+hist(RBCcts$nTfns, breaks = c(0, 25, 50, 75, 100, 125, 150, 175, 200, 225, 250), col = "#BB3754FF", xlab = "# units used", ylab = "# days", main = paste("Histogram of Daily RBC Usage, ", format(mindate, "%m/%d/%Y"), "to", format(maxdate, "%m/%d/%Y")))
+
+cat("For time period", format(mindate, "%m/%d/%Y"), "to", format(maxdate, "%m/%d/%Y"), ": \n", 
+    "Mean daily RBC usage was", meanRBC, "units, with a standard deviation of ", SDRBC, "units. \n",
+    "An RBC inventory of", meanRBC + 2*SDRBC, "units would be sufficient for 95% of days.\n",
+    "Mean RBC usage over 5 day periods was", meanrollingAvgRBC*5, "units with a standard deviation of ", SDrollingAvgRBC*5, "units.\n",
+    "An RBC inventory of", 5*(meanrollingAvgRBC + 2*SDrollingAvgRBC), "units would be sufficient for 95% of 5 day periods. \n")
+
+hist(FFPcts$nTfns, col = "#F9C932FF", xlab = "# units used", ylab = "# days", main = paste("Histogram of Daily FFP Usage, ", format(mindate, "%m/%d/%Y"), "to", format(maxdate, "%m/%d/%Y")))
+
+cat("Mean daily FFP usage was", meanFFP, "units, with a standard deviation of ", SDFFP, "units. \n",
+    "An FFP inventory of", meanFFP + 2*SDFFP, "units would be sufficient for 95% of days.\n",
+    "Mean FFP usage over 5 day periods was", meanrollingAvgFFP*5, "units with a standard deviation of ", SDrollingAvgFFP*5, "units.\n",
+    "An FFP inventory of", 5*(meanrollingAvgFFP + 2*SDrollingAvgFFP), "units would be sufficient for 95% of 5 day periods. \n")
+
+hist(PLTcts$nTfns, col = "#F57A18FF", xlab = "# units used", ylab = "# days", main = paste("Histogram of Daily PLT Usage, ", format(mindate, "%m/%d/%Y"), "to", format(maxdate, "%m/%d/%Y")))
+
+cat("Mean daily PLT usage was", meanPLT, "units, with a standard deviation of ", SDPLT, "units. \n",
+    "An PLT inventory of", meanPLT + 2*SDPLT, "units would be sufficient for 95% of days.\n",
+    "Mean PLT usage over 5 day periods was", meanrollingAvgPLT*5, "units with a standard deviation of ", SDrollingAvgPLT*5, "units.")
+
+
+```
+
+## Outliers
+
+While the mean and standard deviation include skew due to outliers, it can also be helpful to identify periods of maximal usage and how single day maximums differ from 5 day rolling maximums.
+
+```{r echo = FALSE}
+
+cat("The highest single day RBC usage was", maxRBC, "units.\n",
+    "The highest 5 day RBC usage was", 5*maxrollingAvgRBC, "units.\n",
+    "The highest single day FFP usage was", maxFFP, "units.\n",
+    "The highest 5 day FFP usage was", 5*maxrollingAvgFFP, "units.\n", 
+     "The highest single day PLT usage was", maxPLT, "units.\n",
+    "The highest 5 day PLT usage was", 5*maxrollingAvgPLT, "units.")
+
+
+```

@@ -1,0 +1,201 @@
+---
+title: "Blood Usage By Day"
+author: "C Murphy"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(viridis)
+
+## This line overwrites the default ggplot color function with a manual scale for filling for the 4 products of interest.
+scale_fill_discrete <- function(...) scale_fill_manual(values=c("#FCFFA4FF", "#F9C932FF", "#F57A18FF", "#BB3754FF"))
+
+## Set a default theme for all ggplots.
+theme_set(theme_bw())
+
+
+```
+
+## Purpose
+
+This tidyverse based R workflow analyzes blood usage at UMaryland Medical Center by day using data generated entirely from the Cerner LIS.
+
+```{r include = FALSE}
+## This is the data importation, cleaning, and manipulation block.
+
+## Import data
+tfns <- read.csv("March24_CM_Discern.csv")
+
+## Convert dates from factors into date objects via stripping the time and converting to a POSIXCT
+tfns <- tfns %>% mutate(Issued_DT = as.POSIXct(strptime(EVENT_DT_TM, "%m/%d/%Y %H:%M"))) %>% mutate(Issued_DO = format(Issued_DT, "%m/%d/%Y")) %>% mutate(WD = weekdays(Issued_DT))
+
+## Our database has multiple institutions. This code selects the institution of interest.
+## Facility codes: 
+## UMMC - "Univ MD Med Sys"
+## Midtown - "UM-MTC"
+## Baltimore-Washington - "UM-BWMC"
+tfns <- tfns %>% filter(str_detect(FACILITY, "Univ MD Med Sys"))
+
+## Assign product types via ISBT codes - this may not be necessary if your database comes with products pre-identified.
+redcellCodes <- paste(c("E0224", "E0226", "E0332", "E0336", "E0379", "E0382", "E0668", "E0669", "E0685", "E0686", "E5169"), collapse = "|")
+plasmaCodes <- paste(c("E2700", "E2701", "E2719", "E7731", "E7750", "E7751", "E7752"), collapse = "|")
+pltCodes <- paste(c("E2986", "E3046", "E3056", "E3057", "E3077", "E3087", "E3088", "E3089", "E7002", "E7003", "E7005", "E7006", "E7007", "E7008", "E7012", "E8340", "E8341", "E8342", "E8343"), collapse = "|")
+cryoCodes <- paste(c("E3591", "E3592"), collapse = "|")
+
+tfns <- tfns %>% mutate(ProductID = case_when(str_detect(PRODUCT_TYPE_DISPLAY, redcellCodes) ~ "RBC", str_detect(PRODUCT_TYPE_DISPLAY, plasmaCodes) ~ "FFP", str_detect(PRODUCT_TYPE_DISPLAY, pltCodes) ~ "PLT", str_detect(PRODUCT_TYPE_DISPLAY, cryoCodes) ~ "CRYO"))
+
+## Get the most recent date in the database.
+mostRctDat <- max(tfns$Issued_DT)
+
+## Count the number of events every day, summarizing by number of transfusions.
+twowkCts <- tfns %>% filter(Issued_DT >= round.POSIXt(mostRctDat - (14*60*60*24), units = "days")) %>% group_by(Issued_DO, ProductID) %>% summarise(nTfns = length(PRODUCT_NBR))  %>% mutate(Issued_POS = as.POSIXct(strptime(Issued_DO, "%m/%d/%Y")))
+onewkCts <- tfns %>% filter(Issued_DT >= round.POSIXt(mostRctDat - (7*60*60*24), units = "days")) %>% group_by(Issued_DO, ProductID) %>% summarise(nTfns = length(PRODUCT_NBR)) %>% mutate(Issued_POS = as.POSIXct(strptime(Issued_DO, "%m/%d/%Y")))
+
+
+## Quality check to make sure these numbers equal the number of events in the tfns file - perform 
+## length(tfns$PRODUCT_NBR)
+## sum(twowkCts$nTfns)
+
+## Import inventory data
+inventory <- read.csv("Inventories_CM_Excel324.csv")
+
+## Add date and time columns for merger with usage data
+inventory <- inventory %>% mutate(inv_DT = format(strptime(Date, "%m/%d/%Y"), "%m/%d/%Y")) %>% mutate(ProductID = as.character(ProductID)) %>% mutate(inv_POS = as.POSIXct(strptime(inv_DT, "%m/%d/%Y")))
+
+## Our inventory data contains ABO and Rh - this collapses down on just RBC, FFP, PLT and CRYO.
+simpleInventory <- inventory %>% group_by(inv_DT, ProductID) %>% summarise(nInvTotal = sum(nInventory)) %>% mutate(inv_POS = as.POSIXct(strptime(inv_DT, "%m/%d/%Y")))
+
+## Join inventory and one week of usage.
+combined <- inner_join(onewkCts, simpleInventory, by = c("Issued_DO" = "inv_DT", "ProductID" = "ProductID"))
+
+## Get the latest date
+maxdate <- max(simpleInventory$inv_POS)
+
+## Pull down just single unit type inventory/usage
+
+RBConewkCts <- simpleInventory %>% filter(ProductID == "RBC" )
+FFPonewkCts <- simpleInventory %>% filter(ProductID == "FFP")
+PLTonewkCts <- simpleInventory %>% filter(ProductID == "PLT")
+
+currentRBC <- RBConewkCts %>% filter(inv_POS == maxdate)
+currentRBC <- currentRBC$nInvTotal
+
+currentFFP <- FFPonewkCts %>% filter(inv_POS == maxdate)
+currentFFP <- currentFFP$nInvTotal
+
+
+RBCusage <- onewkCts %>% filter(ProductID == "RBC")
+RBCusage <- round(mean(RBCusage$nTfns), digits = 1)
+
+FFPusage <- onewkCts %>% filter(ProductID == "FFP")
+FFPusage <- round(mean(FFPusage$nTfns), digits = 1)
+
+PLTusage <- onewkCts %>% filter(ProductID == "PLT")
+PLTusage <- round(mean(PLTusage$nTfns), digits = 1)
+
+
+```
+
+## Top Line Inventory Summary
+
+```{r echo = FALSE}
+
+cat("Run Date:", format(Sys.Date(), "%m/%d/%Y"))
+
+cat("The last daily RBC inventory was recorded at", format(maxdate, "%m/%d/%Y"), "and was", currentRBC, "units. \n",
+    "Mean daily RBC usage over the last 7 days was", RBCusage , "units.\n",
+    "At this rate, the current inventory would be expected to last", floor(currentRBC/RBCusage), "days without replenishment.\n",
+    "The last daily plasma inventory was recorded at", format(maxdate, "%m/%d/%Y"), "and was", currentFFP, "units.\n",
+    "Mean daily plasma usage over the last 7 days was", FFPusage, "units.\n",
+    "At this rate, the current inventory would be expected to last", floor(currentFFP/FFPusage), "days without replenishment.\n",
+    "Mean daily platelet usage over the last 7 days was", PLTusage, "units.")
+
+inventory %>%  ggplot(aes(x=inv_POS, y = nInventory, fill = ProductID)) + geom_col() + labs(title = "Inventory", x = "Date", y = "# products in inventory") + scale_fill_viridis(discrete = TRUE, begin = 1, end = 0)
+
+```
+
+
+## Overall and product specific usage
+
+This section starts with graphs of all product usage, then switches to specific product usage with linear regression trend lines based on date. 
+
+```{r echo = FALSE}
+
+twowkCts %>% ggplot(aes(x=Issued_POS, y = nTfns, fill = ProductID)) + geom_col() + labs(title = "Last 2 weeks", x = "Date", y = "# products transfused")
+
+onewkCts %>% ggplot(aes(x=Issued_POS, y = nTfns, fill = ProductID)) + geom_col() + labs(title = "Last 1 week", x = "Date", y = "# products transfused")
+
+cat("Product specific usage")
+
+twowkCts %>% filter(ProductID == "RBC") %>% ggplot(aes(x=Issued_POS, y = nTfns)) + geom_col(fill = "#BB3754FF") + labs(title = "RBCs", x = "Date", y = "# products transfused") + geom_smooth(method = "lm", se = FALSE)
+
+redLR <- twowkCts %>% filter(ProductID == "RBC") %>% lm(formula = nTfns ~ Issued_POS)
+print(summary(redLR))
+
+twowkCts %>% filter(ProductID == "FFP") %>% ggplot(aes(x=Issued_POS, y = nTfns)) + geom_col(fill = "#F9C932FF") + labs(title = "Plasma", x = "Date", y = "# products transfused") + geom_smooth(method = "lm", se = FALSE)
+
+FFPLR <- twowkCts %>% filter(ProductID == "FFP") %>% lm(formula = nTfns ~ Issued_POS)
+print(summary(FFPLR))
+
+twowkCts %>% filter(ProductID == "PLT") %>% ggplot(aes(x=Issued_POS, y = nTfns)) + geom_col(fill = "#F57A18FF") + labs(title = "Platelets", x = "Date", y = "# products transfused") + geom_smooth(method = "lm", se = FALSE)
+
+PLTLR <- twowkCts %>% filter(ProductID == "PLT") %>% lm(formula = nTfns ~ Issued_POS)
+print(summary(PLTLR))
+
+
+```
+
+## Usage by hospital location
+```{r echo = FALSE}
+# Including locations
+locCts <- tfns %>% filter(Issued_DT >= Sys.Date() - 14) %>% group_by(Issued_DO, ProductID, DISPENSED_TO_LOCATION) %>% summarise(nTfns = length(PRODUCT_NBR))  %>% mutate(Issued_POS = as.POSIXct(strptime(Issued_DO, "%m/%d/%Y")))
+
+traumalocCodes <- paste(c("Trauma", "TRU", "STC", "T3S", "T4H", "T4N", "T4S", "T5N", "T5S", "T6M", "T6N"), collapse = "|")
+stolerlocCodes <- paste(c("CCAL", "CCAP", "CCHM", "CCIF", "CCPA", "Transplant Infu", "PEDS-INFUSION"), collapse = "|")
+ICUlocCodes <- paste(c("MICU", "CS ICU", "C7W", "U-IMCW5", "3E Gudelsky", "3W Gudelsky", "4E Gudelsky", "CCR T6"), collapse = "|")
+cancerinptCodes <- paste(c("N8W", "N9 West", "Bone Marrow", "9W Gudelsky"), collapse = "|")
+OBcodes <- paste(c("UMH-Labor", "UMH-LABOR", "6 - Mother"), collapse = "|")
+oproomCodes <- paste(c("GOR", "UMH PACU", "UMH Peri-OP"), collapse = "|")
+
+## Other location codes:
+## postsurgicallocCodes <- paste(c("C5W", "C6 CS", "C9E", "W5A", "W5B"), collapse = "|")
+## pedsinptLocCodes <- paste(c("Peds Hem/Onc", "5A Pediatrics", "C4W-PICU", "N4-NICU"), collapse = "|")
+
+
+locCts <- locCts %>% mutate(LocID = case_when(str_detect(DISPENSED_TO_LOCATION, traumalocCodes) ~ "Trauma OR and Tower", str_detect(DISPENSED_TO_LOCATION, stolerlocCodes) ~ "Outpatient infusion centers", str_detect(DISPENSED_TO_LOCATION, oproomCodes) ~ "General OR", str_detect(DISPENSED_TO_LOCATION, cancerinptCodes) ~ "Inpatient Cancer Units",  str_detect(DISPENSED_TO_LOCATION, ICUlocCodes) ~ "ICUs",  str_detect(DISPENSED_TO_LOCATION, OBcodes) ~ "Obstetrics/Gynecology", TRUE ~ "Other"))
+
+## other areas:
+##  str_detect(DISPENSED_TO_LOCATION, pedsinptLocCodes) ~ "Pediatrics"
+## str_detect(DISPENSED_TO_LOCATION, postsurgicallocCodes) ~ "Post surgery floors"
+
+locCts %>% ggplot(aes(x=Issued_POS, y = nTfns, fill = LocID)) + geom_col() + labs(title = "Last 2 weeks", x = "Date", y = "# products transfused") + scale_fill_viridis_d(option = "plasma")
+
+cat("Specific location usage over time")
+
+locCts %>% filter(LocID == "Trauma OR and Tower") %>% ggplot(aes(x=Issued_POS, y = nTfns, fill = DISPENSED_TO_LOCATION)) + geom_col() + labs(title = "Trauma ORs and Tower", x = "Date", y = "# products transfused") + scale_fill_viridis_d(option = "plasma")
+
+locCts %>% filter(LocID == "General OR") %>% ggplot(aes(x=Issued_POS, y = nTfns, fill = DISPENSED_TO_LOCATION)) + geom_col() + labs(title = "General ORs", x = "Date", y = "# products transfused") + scale_fill_viridis_d(option = "plasma")
+
+locCts %>% filter(LocID == "ICUs") %>% ggplot(aes(x=Issued_POS, y = nTfns, fill = DISPENSED_TO_LOCATION)) + geom_col() + labs(title = "ICUs", x = "Date", y = "# products transfused") + scale_fill_viridis_d(option = "plasma")
+
+locCts %>% filter(LocID == "Obstetrics/Gynecology") %>% ggplot(aes(x=Issued_POS, y = nTfns, fill = DISPENSED_TO_LOCATION)) + geom_col() + labs(title = "Obstetrics/Gynecology", x = "Date", y = "# products transfused") + scale_fill_viridis_d(option = "plasma")
+
+locCts %>% filter(LocID == "Inpatient Cancer Units") %>% ggplot(aes(x=Issued_POS, y = nTfns, fill = DISPENSED_TO_LOCATION)) + geom_col() + labs(title = "Inpatient Cancer Units", x = "Date", y = "# products transfused") + scale_fill_viridis_d(option = "plasma")
+
+locCts %>% filter(LocID == "Outpatient infusion centers") %>% ggplot(aes(x=Issued_POS, y = nTfns, fill = DISPENSED_TO_LOCATION)) + geom_col() + labs(title = "Outpatient infusion centers", x = "Date", y = "# products transfused") + scale_fill_viridis_d(option = "plasma")
+
+locCts %>% filter(LocID == "Other") %>% ggplot(aes(x=Issued_POS, y = nTfns, fill = DISPENSED_TO_LOCATION)) + geom_col() + labs(title = "Other locations", x = "Date", y = "# products transfused") + scale_fill_viridis_d(option = "plasma")
+
+cat("Products to locations:")
+
+locCts %>% filter(ProductID == "PLT") %>% ggplot(aes(x=Issued_POS, y = nTfns, fill = LocID)) + geom_col() + labs(title = "Platelets", x = "Date", y = "# products transfused") + scale_fill_viridis_d(option = "plasma")
+
+locCts %>% filter(ProductID == "FFP") %>% ggplot(aes(x=Issued_POS, y = nTfns, fill = LocID)) + geom_col() + labs(title = "Plasma", x = "Date", y = "# products transfused") + scale_fill_viridis_d(option = "plasma")
+
+locCts %>% filter(ProductID == "RBC") %>% ggplot(aes(x=Issued_POS, y = nTfns, fill = LocID)) + geom_col() + labs(title = "RBCs", x = "Date", y = "# products transfused") + scale_fill_viridis_d(option = "plasma")
+
+
+```
+

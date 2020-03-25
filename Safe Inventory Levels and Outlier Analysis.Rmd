@@ -1,0 +1,123 @@
+---
+title: "Safe Inventory Levels and Outlier Analysis"
+author: "C Murphy"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(viridis)
+library(RcppRoll)
+
+## This line overwrites the default ggplot color function with a manual scale for filling for the 4 products of interest.
+scale_fill_discrete <- function(...) scale_fill_manual(values=c("#FCFFA4FF", "#F9C932FF", "#F57A18FF", "#BB3754FF"))
+
+## Set a default theme for all ggplots.
+theme_set(theme_bw())
+
+```
+
+## Purpose
+
+This tidyverse based R workflow analyzes mean blood usage over a given time period in order to calculate safe minimum blood inventories to cover both mean daily usage as well as potential outliers.
+
+
+## Historical Analysis
+
+```{r include = FALSE}
+## This is the data importation, cleaning, and manipulation block.
+
+## Import data
+
+columnNameList <- c("index", "PatientName", "EncounterID", "MedicalRecordNumber", "PatientABO", "PatientRh", "PatientNursingUnit", "ProductDispensedLocation", "ProductNumber", "ProductID", "ISBTCode", "ProductABORh", "VolumeTransfused", "Issued_DateTime_POSIXct", "Issued_DateOnly_POSIXct", "Issued_Weekday", "PhysicianDispensing")
+columnClassList <- c("factor", "character", "factor", "factor", "character", "character", "character", "character", "character", "character", "character", "character", "factor", "POSIXct", "POSIXct", "character", "character")
+
+baseTransfusionData <- read.csv(file = "Your Data Here", colClasses = columnClassList, col.names = columnNameList)
+
+
+## Count the number of transfusions. Ungroup is necessary for the next step.
+transfusionCounts <- baseTransfusionData %>% group_by(Issued_DateOnly_POSIXct, ProductID) %>% summarise(numberTransfusions = length(ProductNumber)) %>% ungroup()
+
+## Calculate mean product usage and standard deviations, as well as rolling averages.
+RBCcounts <- transfusionCounts %>% filter(ProductID == "RBC")
+FFPcounts <- transfusionCounts %>% filter(ProductID == "FFP")
+PlateletCounts <- transfusionCounts %>% filter(ProductID == "PLT")
+
+meanRBC <- mean(RBCcounts$numberTransfusions)
+SDRBC <- sd(RBCcounts$numberTransfusions)
+maxRBC <- max(RBCcounts$numberTransfusions)
+
+rollingAvgRBC <- roll_mean(RBCcounts$numberTransfusions, n= 5)
+meanrollingAvgRBC <- mean(rollingAvgRBC)
+SDrollingAvgRBC <- sd(rollingAvgRBC)
+maxrollingAvgRBC <- max(rollingAvgRBC)
+
+meanFFP <- mean(FFPcounts$numberTransfusions)
+SDFFP <- sd(FFPcounts$numberTransfusions)
+maxFFP <- max(FFPcounts$numberTransfusions)
+
+rollingAvgFFP <- roll_mean(FFPcounts$numberTransfusions, n= 5)
+meanrollingAvgFFP <- mean(rollingAvgFFP)
+SDrollingAvgFFP <- sd(rollingAvgFFP)
+maxrollingAvgFFP <- max(rollingAvgFFP)
+
+
+meanPLT <- mean(PlateletCounts$numberTransfusions)
+SDPLT <- sd(PlateletCounts$numberTransfusions)
+maxPLT <- max(PlateletCounts$numberTransfusions)
+
+rollingAvgPLT <- roll_mean(PlateletCounts$numberTransfusions, n= 5)
+meanrollingAvgPLT <- mean(rollingAvgPLT)
+SDrollingAvgPLT <- sd(rollingAvgPLT)
+maxrollingAvgPLT <- max(rollingAvgPLT)
+
+
+
+mindate <- min(transfusionCounts$Issued_DateOnly_POSIXct)
+maxdate <- max(transfusionCounts$Issued_DateOnly_POSIXct)
+
+
+```
+
+
+```{r echo = FALSE}
+hist(RBCcounts$numberTransfusions, breaks = c(0, 25, 50, 75, 100, 125, 150, 175, 200, 225, 250), col = "#BB3754FF", xlab = "# units used", ylab = "# days", main = paste("Histogram of Daily RBC Usage, ", format(mindate, "%m/%d/%Y"), "to", format(maxdate, "%m/%d/%Y")))
+
+cat("For time period", format(mindate, "%m/%d/%Y"), "to", format(maxdate, "%m/%d/%Y"), ": \n", 
+    "Mean daily RBC usage was", meanRBC, "units, with a standard deviation of ", SDRBC, "units. \n",
+    "An RBC inventory of", meanRBC + 2*SDRBC, "units would be sufficient for 95% of days.\n",
+    "Mean RBC usage over 5 day periods was", meanrollingAvgRBC*5, "units with a standard deviation of ", SDrollingAvgRBC*5, "units.\n",
+    "An RBC inventory of", 5*(meanrollingAvgRBC + 2*SDrollingAvgRBC), "units would be sufficient for 95% of 5 day periods. \n")
+
+hist(FFPcounts$numberTransfusions, col = "#F9C932FF", xlab = "# units used", ylab = "# days", main = paste("Histogram of Daily FFP Usage, ", format(mindate, "%m/%d/%Y"), "to", format(maxdate, "%m/%d/%Y")))
+
+cat("Mean daily FFP usage was", meanFFP, "units, with a standard deviation of ", SDFFP, "units. \n",
+    "An FFP inventory of", meanFFP + 2*SDFFP, "units would be sufficient for 95% of days.\n",
+    "Mean FFP usage over 5 day periods was", meanrollingAvgFFP*5, "units with a standard deviation of ", SDrollingAvgFFP*5, "units.\n",
+    "An FFP inventory of", 5*(meanrollingAvgFFP + 2*SDrollingAvgFFP), "units would be sufficient for 95% of 5 day periods. \n")
+
+hist(PlateletCounts$numberTransfusions, col = "#F57A18FF", xlab = "# units used", ylab = "# days", main = paste("Histogram of Daily PLT Usage, ", format(mindate, "%m/%d/%Y"), "to", format(maxdate, "%m/%d/%Y")))
+
+cat("Mean daily PLT usage was", meanPLT, "units, with a standard deviation of ", SDPLT, "units. \n",
+    "An PLT inventory of", meanPLT + 2*SDPLT, "units would be sufficient for 95% of days.\n",
+    "Mean PLT usage over 5 day periods was", meanrollingAvgPLT*5, "units with a standard deviation of ", SDrollingAvgPLT*5, "units.")
+
+
+```
+
+## Outliers
+
+While the mean and standard deviation include skew due to outliers, it can also be helpful to identify periods of maximal usage and how single day maximums differ from 5 day rolling maximums.
+
+```{r echo = FALSE}
+
+cat("The highest single day RBC usage was", maxRBC, "units.\n",
+    "The highest 5 day RBC usage was", 5*maxrollingAvgRBC, "units.\n",
+    "The highest single day FFP usage was", maxFFP, "units.\n",
+    "The highest 5 day FFP usage was", 5*maxrollingAvgFFP, "units.\n", 
+     "The highest single day PLT usage was", maxPLT, "units.\n",
+    "The highest 5 day PLT usage was", 5*maxrollingAvgPLT, "units.")
+
+
+```

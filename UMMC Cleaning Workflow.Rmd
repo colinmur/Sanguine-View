@@ -1,0 +1,49 @@
+---
+title: "UMMC Cleaning Workflow"
+author: "C Murphy"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+
+```
+
+## UMMC Transfusion Data Cleaning
+
+This workflow is designed to identify products 
+
+```{r echo = FALSE}
+## Import data
+transfusionData <- read.csv("UsageMarch25_Discern_CM.csv")
+
+## Convert dates from factors into date objects via stripping the time and converting to a POSIXCT
+transfusionData <- transfusionData %>% mutate(Issued_DateTime_POSIXct = as.POSIXct(strptime(EVENT_DT_TM, format = "%m/%d/%Y %H:%M"))) %>% mutate(dayOfWeek = weekdays(Issued_DateTime_POSIXct)) %>% mutate(Issued_DateOnly_POSIXct = as.POSIXct(strptime(format(Issued_DateTime_POSIXct, "%m/%d/%Y"), "%m/%d/%Y")))
+
+## Our database has multiple institutions. This code selects the institution of interest.
+transfusionData <- transfusionData %>% filter(str_detect(FACILITY, "Univ MD Med Sys"))
+
+## Assign product types via ISBT codes - this may not be necessary if your database comes with products pre-identified.
+## There's obviously a much smarter way of doing this - just block off ISBT codes by what each chunk is, as certain numbers are certain products.
+## EG 0000-0150 are all whole blood.
+## I will eventually figure out how to implement that - preserved here is an example of doing what works fastest under crunch.
+redcellCodes <- paste(c("E0224", "E0226", "E0332", "E0336", "E0379", "E0382", "E0668", "E0669", "E0685", "E0686", "E5169"), collapse = "|")
+plasmaCodes <- paste(c("E2700", "E2701", "E2719", "E7731", "E7750", "E7751", "E7752"), collapse = "|")
+plateletCodes <- paste(c("E2986", "E3046", "E3056", "E3057", "E3077", "E3087", "E3088", "E3089", "E7002", "E7003", "E7005", "E7006", "E7007", "E7008", "E7012", "E8340", "E8341", "E8342", "E8343"), collapse = "|")
+cryoCodes <- paste(c("E3591", "E3592"), collapse = "|")
+
+## PRODUCT_TYPE_DISPLAY in our data gives an ISBT code for a blood product, followed by a description of the product. ISBT codes are unique, so we rely on them to identify the product type as 1 of 4 possible options.
+## There are additional specialized products not caught by this analysis, eg granulocytes, that will show a ProductID of NA when this script is run. It's always worth reviewing your generated csv for NA values.
+## Once you know what's being labeled with a ProductID and what's not, you can add %>% filter(!.is.na(ProductID)) to remove the products not described by the codes above.
+
+transfusionData <- transfusionData %>% mutate(ProductID = case_when(str_detect(PRODUCT_TYPE_DISPLAY, redcellCodes) ~ "RBC", str_detect(PRODUCT_TYPE_DISPLAY, plasmaCodes) ~ "FFP", str_detect(PRODUCT_TYPE_DISPLAY, plateletCodes) ~ "PLT", str_detect(PRODUCT_TYPE_DISPLAY, cryoCodes) ~ "CRYO"))
+
+## Taking only the columns we want for analysis
+transfusionData <- transfusionData %>% select(PATIENT_NAME, FIN, MRN, PATIENT_ABO_CD, PATIENT_RH_CD, NURSE_UNIT, DISPENSED_TO_LOCATION, PRODUCT_NBR, ProductID, PRODUCT_TYPE_DISPLAY, Product_ABORH, TRANSFUSED_VOL, Issued_DateTime_POSIXct, Issued_DateOnly_POSIXct, dayOfWeek, Dispensed_Physician_NAME)
+
+## Ouptut the file!
+write.csv(transfusionData, paste("CleanedTransfusionData_bugs2.csv"), )
+head(transfusionData)
+
+```

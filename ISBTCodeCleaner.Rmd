@@ -1,0 +1,25 @@
+---
+title: "ISBT_CodeCleaner"
+author: "C Murphy"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+
+```
+
+## ISBT Code Cleaner
+
+```{r}
+
+ISBTCodes <- read.csv("isbt_codes.csv")
+
+ISBTCodes <- ISBTCodes %>% mutate(ProductID = case_when(str_detect(Description, paste(c("RED BLOOD CELLS", "RBC RECONSTITUTED"), collapse = "|")) ~ "RBC", str_detect(Description, paste(c("PLASMA", "FFP"), collapse = "|")) ~ "FFP", str_detect(Description, "PLATELET") ~ "PLT", str_detect(Description, paste(c("CRYOPRECIP", "CRYO POOLED"), collapse = "|")) ~ "CRYO", str_detect(Description, "WHOLE BLOOD") ~ "WholeBlood", str_detect(Description, "GRANULOCYTES") ~ "Granulocytes"))
+
+head(ISBTCodes)
+
+write.csv(ISBTCodes, "ISBT_codes_productID.csv")
+
+```

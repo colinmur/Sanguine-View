@@ -12,53 +12,51 @@ library(tidyverse)
 
 ## UMMC Transfusion Data Cleaning
 
-This workflow is designed to identify products 
+This workflow is designed to identify blood products from a database that uses a combination of ISBT terminology and short strings pulled from the ISBT product descriptions. This depends on having access to a full list of ISBT blood product codes, which are copyrighted but should be accessbile from your local IT or billing department.
+
+```{r}
+## Read in a csv of ISBT codes that have been previously matched to product IDs (see the ISBTCodeCleaner RMD).
+ISBTCodes <- read.csv("ISBT_codes_productID.csv")
+
+## Assign product types via ISBT codes and unique short descriptive strings. ^ (caret) is a regex operator that indicates the pattern to be matched is at the beginning of the line.
+redCellCodes <- ISBTCodes %>% filter(ProductID == "RBC")
+redCellCodes <- paste(c(as.character(redCellCodes$Ecode), "RC/", "RC1/", "RC2/", "W/Aph/RC/", "W/RC/", "Deg/RC/", "Deg/Aph/RC/", "Aph/RC/"), collapse = "|^")
+head(redCellCodes)
+
+plasmaCodes <- ISBTCodes %>% filter(ProductID == "FFP")
+plasmaCodes <- paste(c(as.character(plasmaCodes$Ecode), "T/P", "T/Aph", "T/C/P", "D6720", "D6730"), collapse = "|^")
+head(plasmaCodes)
+
+plateletCodes <- ISBTCodes %>% filter(ProductID == "PLT")
+plateletCodes <- paste(c(as.character(plateletCodes$Ecode), "A/P", "W/A/P"), collapse = "|^")
+head(plateletCodes)
+
+cryoCodes <- ISBTCodes %>% filter(ProductID == "CRYO")
+cryoCodes <- paste(c(as.character(cryoCodes$Ecode)), collapse = "|^")
+head(cryoCodes)
+
+```
+
 
 ```{r echo = FALSE}
 ## Import data
-transfusionData <- read.csv("313262020_Discern_CM.csv")
+transfusionData <- read.csv("YOUR DATA HERE.csv")
 
 ## Convert dates from factors into date objects via stripping the time and converting to a POSIXCT
 transfusionData <- transfusionData %>% mutate(Issued_DateTime_POSIXct = as.POSIXct(strptime(EVENT_DT_TM, format = "%m/%d/%Y %H:%M"))) %>% mutate(dayOfWeek = weekdays(Issued_DateTime_POSIXct)) %>% mutate(Issued_DateOnly_POSIXct = as.POSIXct(strptime(format(Issued_DateTime_POSIXct, "%m/%d/%Y"), "%m/%d/%Y")))
 
-## Our database has multiple institutions. This code selects the institution of interest.
-transfusionData <- transfusionData %>% filter(str_detect(FACILITY, "Univ MD Med Sys"))
+## Our database has multiple institutions. This code selects the institution of interest. 
+##It turns out that a lot of the older data has FACILITY as blank when it's mostly UMMC.
+transfusionData <- transfusionData %>% filter(FACILITY == "" | FACILITY == "Univ MD Med Sys")
 
-## Read in a csv of ISBT codes that have been previously matched to product IDs (see the ISBTCodeCleaner RMD).
-
-ISBTCodes <- read.csv("ISBT_codes_productID.csv")
-
-## Assign product types via ISBT codes - this may not be necessary if your database comes with products pre-identified.
-
-
-
-redCellCodes <- ISBTCodes %>% filter(ProductID == "RBC")
-redCellCodes <- paste(redCellCodes$Ecode, collapse = "|")
-head(redCellCodes)
-
-plasmaCodes <- ISBTCodes %>% filter(ProductID == "FFP")
-plasmaCodes <- paste(plasmaCodes$Ecode, collapse = "|")
-head(plasmaCodes)
-
-plateletCodes <- ISBTCodes %>% filter(ProductID == "PLT")
-plateletCodes <- paste(plateletCodes$Ecode, collapse = "|")
-head(plateletCodes)
-
-cryoCodes <- ISBTCodes %>% filter(ProductID == "CRYO")
-cryoCodes <- paste(as.character(cryoCodes$Ecode), collapse = "|")
-head(cryoCodes)
-
-## PRODUCT_TYPE_DISPLAY in our data gives an ISBT Product Description code, aka 'E code', for a blood product, followed by an abbreviated description of the product. ISBT codes are unique, so we rely on them to identify the product type as 1 of 4 possible options.
-## There are additional  products not caught by this analysis that might be in your transfusion database, eg granulocytes, tissue, hematopoietic cells for infusion, that will show a ProductID of NA when this script is run. It's always worth reviewing your generated csv for NA values, as well as validating the assignment of product types.
-## Once you know what's being labeled with a ProductID and what's not, you can add %>% filter(!.is.na(ProductID)) at the end to remove the products not described by the codes above that you are sure you don't want to include.
-
+## ProductID label applied
 transfusionData <- transfusionData %>% mutate(ProductID = case_when(str_detect(PRODUCT_TYPE_DISPLAY, redCellCodes) ~ "RBC", str_detect(PRODUCT_TYPE_DISPLAY, plasmaCodes) ~ "FFP", str_detect(PRODUCT_TYPE_DISPLAY, plateletCodes) ~ "PLT", str_detect(PRODUCT_TYPE_DISPLAY, cryoCodes) ~ "CRYO", TRUE ~ "Missing"))
 
 ## Taking only the columns we want for analysis
 transfusionData <- transfusionData %>% select(PATIENT_NAME, FIN, MRN, PATIENT_ABO_CD, PATIENT_RH_CD, NURSE_UNIT, DISPENSED_TO_LOCATION, PRODUCT_NBR, ProductID, PRODUCT_TYPE_DISPLAY, Product_ABORH, TRANSFUSED_VOL, Issued_DateTime_POSIXct, Issued_DateOnly_POSIXct, dayOfWeek, Dispensed_Physician_NAME)
 
 ## Ouptut the file!
-write.csv(transfusionData, paste("CleanedTransfusionData_", Sys.Date(), ".csv"))
+write.csv(transfusionData, "YOUR OUTPUT NAME HERE.csv")
 head(transfusionData)
 
 ```
